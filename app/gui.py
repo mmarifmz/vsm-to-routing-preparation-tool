@@ -764,16 +764,33 @@ class App:
             self.page_tree.column(column, width=width, anchor=anchor)
         page_toolbar = ttk.Frame(page_card)
         page_toolbar.grid(row=0, column=0, sticky="ew", pady=(0, 5))
-        page_toolbar.columnconfigure(0, weight=1)
+        page_toolbar.columnconfigure(2, weight=1)
+        ttk.Label(
+            page_toolbar,
+            text="VSM file:",
+            font=("Segoe UI", 9, "bold"),
+        ).grid(row=0, column=0, sticky="w", padx=(0, 5))
+        self.quick_file_var = tk.StringVar()
+        self.quick_file_combo = ttk.Combobox(
+            page_toolbar,
+            textvariable=self.quick_file_var,
+            state="readonly",
+            width=31,
+        )
+        self.quick_file_combo.grid(row=0, column=1, sticky="w", padx=(0, 10))
+        self.quick_file_combo.bind(
+            "<<ComboboxSelected>>",
+            self.quick_file_selected,
+        )
         ttk.Label(
             page_toolbar,
             text="Choose a VSM tab, then select an action.",
             style="Sub.TLabel",
-        ).grid(row=0, column=0, sticky="w")
+        ).grid(row=0, column=2, sticky="w")
         self.regenerate_all_btn = ttk.Button(page_toolbar, text="Regenerate All", command=self.regenerate_all_vsms, style="Primary.TButton", state=tk.DISABLED)
-        self.regenerate_all_btn.grid(row=0, column=2, sticky="e")
+        self.regenerate_all_btn.grid(row=0, column=4, sticky="e")
         self.selected_tab_btn = ttk.Button(page_toolbar, text="Selected Tab", command=self.analyze_selected_vsm, style="Secondary.TButton", state=tk.DISABLED)
-        self.selected_tab_btn.grid(row=0, column=1, sticky="e", padx=(0, 8))
+        self.selected_tab_btn.grid(row=0, column=3, sticky="e", padx=(0, 8))
         ToolTip(self.selected_tab_btn, "Refreshes the selected VSM tab only: its shape metadata, detected workcentres and CRID mapping evidence are reloaded without re-running every tab.")
         ToolTip(self.regenerate_all_btn, "Runs the established full metadata analysis for every tab in every loaded VSDX file.")
         self.page_tree.grid(row=1, column=0, sticky="ew")
@@ -788,6 +805,9 @@ class App:
         preview_card = ttk.Frame(self.center_notebook, padding=6)
         routing_card = ttk.Frame(self.center_notebook, padding=6)
         material_card = ttk.Frame(self.center_notebook, padding=6)
+        self.preview_card = preview_card
+        self.routing_card = routing_card
+        self.material_card = material_card
         self.center_notebook.add(preview_card, text="Visual Preview")
         self.center_notebook.add(routing_card, text="Change Rule Draft")
         self.center_notebook.add(material_card, text="Material Selection")
@@ -1340,6 +1360,7 @@ class App:
             self.center_notebook.grid_remove()
         else:
             self.center_notebook.grid()
+        self.configure_center_tabs(inspect_only=stage == 3)
         if stage == 3:
             self.center_notebook.select(0)
         elif stage in (4, 5, 7):
@@ -1374,6 +1395,7 @@ class App:
         self.body.add(self.center, weight=6)
         self.body.add(self.right, weight=3)
         self.center_notebook.grid()
+        self.configure_center_tabs(inspect_only=False)
         self.page_card.grid()
         self.source_intake_card.grid_remove()
         self.source_card.grid()
@@ -1384,6 +1406,19 @@ class App:
         self.stage_help_var.set("All controls are visible for experienced reviewers; routing logic is unchanged.")
         for button in self.stage_buttons:
             button.configure(style="TButton")
+
+    def configure_center_tabs(self, inspect_only: bool):
+        tabs = (
+            (self.preview_card, "Visual Preview"),
+            (self.routing_card, "Change Rule Draft"),
+            (self.material_card, "Material Selection"),
+        )
+        for panel, title in tabs:
+            self.center_notebook.add(panel, text=title)
+        if inspect_only:
+            self.center_notebook.hide(self.routing_card)
+            self.center_notebook.hide(self.material_card)
+            self.center_notebook.select(self.preview_card)
 
     def clear_mapping_filter_hint(self, _event=None):
         if self.context_mapping_filter.get() == "Filter CRID or workcenter":
@@ -1942,7 +1977,54 @@ class App:
             self.file_tree.selection_set(item_id)
             self.file_tree.focus(item_id)
             self.file_selected()
+        self.refresh_quick_file_selector()
         self.update_stage_buttons()
+
+    def quick_file_label(self, file: FileRecord) -> str:
+        plant = norm(file.plant) or "No Plant"
+        return f"{file.file_name}  [{plant}]"
+
+    def refresh_quick_file_selector(self):
+        if not hasattr(self, "quick_file_combo"):
+            return
+        self.quick_file_map = {}
+        labels = []
+        for index, file in enumerate(self.files, 1):
+            label = self.quick_file_label(file)
+            if label in self.quick_file_map:
+                label = f"{label}  ({index})"
+            self.quick_file_map[label] = file
+            labels.append(label)
+        self.quick_file_combo.configure(values=labels)
+        self.sync_quick_file_selector()
+
+    def sync_quick_file_selector(self):
+        if not hasattr(self, "quick_file_var"):
+            return
+        label = next(
+            (
+                value
+                for value, file in getattr(self, "quick_file_map", {}).items()
+                if file is self.selected_file
+            ),
+            "",
+        )
+        self.quick_file_var.set(label)
+
+    def quick_file_selected(self, _event=None):
+        file = getattr(self, "quick_file_map", {}).get(self.quick_file_var.get())
+        if not file or file is self.selected_file:
+            return
+        item_id = next(
+            (item for item, record in self.file_map.items() if record is file),
+            "",
+        )
+        if not item_id:
+            return
+        self.file_tree.selection_set(item_id)
+        self.file_tree.focus(item_id)
+        self.file_tree.see(item_id)
+        self.file_selected()
 
     def remove_file(self):
         selection = self.file_tree.selection()
@@ -1989,6 +2071,7 @@ class App:
         )
         self.plant_saved_value = self.selected_file.plant if self.selected_file else ""
         self.plant_state.set("✓ Saved" if self.selected_file else "Select a VSDX file")
+        self.sync_quick_file_selector()
         self.refresh_plant_buttons()
         self.selected_page = None
         self.refresh_pages()
