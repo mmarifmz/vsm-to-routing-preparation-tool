@@ -2,11 +2,14 @@
 
 ## 1.3.8
 
+- Rebuilt Step 2 as an evidence-first flow: VSM file and Plant assignment is now the first card, followed by a selected-file table of discovered WorkCenters, source tabs/pages, and occurrence counts.
+- Removed the active-Plant CRID/WorkCenter mapping list from guided Step 2 because it implied department ownership before the VSM context had been confirmed; the expert mapping editor remains available in Advanced workspace.
+- Changed Suggested CRID to a neutral, lowercase snake_case value derived only from the VSM tab name. Status words such as Complete, Working, and In Progress plus common dates are stripped, and the user must still confirm the assignment.
+- Expanded discovery vocabulary with the user-confirmed Step 0 WorkCenter reference without using that workbook to auto-assign a Department/CRID.
 - Corrected SEQ/SUB semantics to operate within each Department/CRID: connector flow determines functional SEQ order (including snake layouts), parallel operations share one SEQ with consecutive SUB values, repeated WCs at different stages are preserved, and validation checks duplicates and gaps per CRID.
 - Simplified Inspect process to the Visual Preview only and added a top VSM-file selector for switching loaded files without returning to Assign context.
 - Simplified the Step 2 panel titles to **Active Plant mapping** and **VSM files and plant assignment**, and expanded the active mapping table to show more records without scrolling.
-- Added completed/dated VSM page-name inference when a Plant mapping is incomplete, with stable snake_case keys such as `bearing_assembly` and `fab_lining`.
-- Added alias reconciliation so descriptive page names retain an existing business CRID when one is available, plus visible suggestion provenance in Step 2.
+- Added stable snake_case VSM tab suggestions such as `bearing_assembly` and `fab_lining`, with visible provenance in Step 2.
 - Excluded pages marked `Old` or `Combined into` from page-name inference and added automated regression tests for CA06-style detection.
 - Added a gated **Step 0 — Data sources** for the raw P41 Routing extraction, PTS03 WorkCenter mapping, and MRP/Production Supervisor reference.
 - Added workbook-tab discovery and an explicit **Confirm & Load** action so no raw sheet is consumed immediately after file browsing.

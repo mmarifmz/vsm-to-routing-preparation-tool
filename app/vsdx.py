@@ -69,25 +69,13 @@ def page_department_candidate(
     page_name: str,
     known_departments: Sequence[str] = (),
 ) -> str:
-    """Infer a department from a current completed/dated VSM page name."""
+    """Create a neutral CRID suggestion from the VSM tab name only."""
     lowered = str(page_name or "").lower()
     if "combined into" in lowered or re.search(r"\bold\b", lowered):
         return ""
-    has_date = bool(
-        re.search(r"\b\d{4}[-/]\d{1,2}[-/]\d{1,2}\b", lowered)
-        or re.search(r"\b\d{1,2}[-/]\d{1,2}[-/]\d{4}\b", lowered)
-    )
-    if not has_date and not re.search(r"\bcomplete(?:d)?\b", lowered):
-        return ""
-
     slug = department_slug(page_name)
-    if not slug:
+    if not slug or slug in {"template", "page", "sheet", "drawing", "untitled"}:
         return ""
-
-    page_terms = _department_terms(slug)
-    for department in known_departments:
-        if page_terms and page_terms == _department_terms(department):
-            return norm(department)
     return slug
 
 
@@ -399,65 +387,51 @@ def parse_connections(root: ET.Element) -> List[ConnectionRecord]:
     return output
 
 
-def apply_mapping(page: PageRecord, plant: str, mapping: Optional[MappingIndex]) -> None:
-    known = mapping.workcenters_for_plant(plant) if mapping else []
+def apply_mapping(
+    page: PageRecord,
+    plant: str,
+    mapping: Optional[MappingIndex],
+    known_workcenters: Sequence[str] = (),
+) -> None:
+    known = sorted(
+        {
+            norm(value)
+            for value in [
+                *(mapping.workcenters_for_plant(plant) if mapping else []),
+                *known_workcenters,
+            ]
+            if norm(value)
+        }
+    )
     for shape in page.shapes:
         shape.workcenters = detect_wc(shape.text, known)
 
     workcenter_counts = Counter()
-    votes = Counter()
-    candidate_workcenters = defaultdict(set)
     matched: Set[str] = set()
     unmatched: Set[str] = set()
+    known_set = set(known)
 
     for shape in page.shapes:
         for workcenter in shape.workcenters:
             workcenter_counts[workcenter] += 1
-            departments = mapping.departments_for_wc(plant, workcenter) if mapping else []
-            if departments:
+            if workcenter in known_set:
                 matched.add(workcenter)
-                for department in departments:
-                    votes[department] += 1
-                    candidate_workcenters[department].add(workcenter)
             else:
                 unmatched.add(workcenter)
 
-    known_departments = mapping.departments_for_plant(plant) if mapping else []
-    name_candidate = page_department_candidate(page.name, known_departments)
-    name_had_workcenter_votes = bool(name_candidate and votes.get(name_candidate))
-    if name_candidate:
-        # A completed/dated page title is stronger department evidence than a
-        # degenerate mapping in which every workcentre points to one CRID.
-        votes[name_candidate] += max(sum(votes.values()) + 1, 1)
-        candidate_workcenters[name_candidate].update(workcenter_counts)
+    name_candidate = page_department_candidate(page.name)
 
     page.workcenter_counts = dict(sorted(workcenter_counts.items()))
-    page.candidate_counts = dict(sorted(votes.items(), key=lambda item: (-item[1], item[0])))
-    page.candidate_wcs = dict(candidate_workcenters)
+    page.candidate_counts = {name_candidate: 1} if name_candidate else {}
+    page.candidate_wcs = {name_candidate: set(workcenter_counts)} if name_candidate else {}
     page.matched_wcs = sorted(matched)
     page.unmatched_wcs = sorted(unmatched)
-    page.suggested_department = ""
-    page.suggestion_source = ""
-    page.confidence = 0.0
-    if not votes and page.assignment_mode == "auto":
+    page.suggested_department = name_candidate
+    page.suggestion_source = "Tab name" if name_candidate else ""
+    page.confidence = 1.0 if name_candidate else 0.0
+    if page.assignment_mode == "auto":
+        # A suggestion is evidence, not approval. The user confirms the CRID.
         page.assigned_department = ""
-
-    if votes:
-        department, count = sorted(votes.items(), key=lambda item: (-item[1], item[0]))[0]
-        page.suggested_department = department
-        page.confidence = count / sum(votes.values())
-        if department == name_candidate:
-            page.suggestion_source = (
-                "Page name + workcenter mapping"
-                if name_had_workcenter_votes
-                else "Page name inference"
-            )
-        else:
-            page.suggestion_source = "Workcenter mapping"
-        if page.assignment_mode == "auto":
-            page.assigned_department = department
-        elif page.assignment_mode == "cleared":
-            page.assigned_department = ""
 
     page.loaded_plant = norm(plant)
 
@@ -468,9 +442,10 @@ def load_page(
     plant: str,
     mapping: Optional[MappingIndex] = None,
     force: bool = False,
+    known_workcenters: Sequence[str] = (),
 ) -> PageRecord:
     if page.loaded and not force:
-        apply_mapping(page, plant, mapping)
+        apply_mapping(page, plant, mapping, known_workcenters)
         return page
 
     page.loading = True
@@ -478,11 +453,16 @@ def load_page(
     try:
         with zipfile.ZipFile(path) as package:
             root = ET.fromstring(package.read(page.xml_path))
-        known = mapping.workcenters_for_plant(plant) if mapping else []
+        known = sorted(
+            {
+                *(mapping.workcenters_for_plant(plant) if mapping else []),
+                *(norm(value) for value in known_workcenters if norm(value)),
+            }
+        )
         page.shapes = parse_shapes(root.find(V + "Shapes"), known)
         page.connections = parse_connections(root)
         page.loaded = True
-        apply_mapping(page, plant, mapping)
+        apply_mapping(page, plant, mapping, known_workcenters)
         return page
     except Exception as exc:
         page.loaded = False
@@ -499,6 +479,7 @@ def analyze(
     log: Optional[Callable[[str], None]] = None,
     page_callback=None,
     pages: Optional[List[PageRecord]] = None,
+    known_workcenters: Sequence[str] = (),
 ) -> FileRecord:
     file_path = Path(path)
     pages = pages if pages is not None else quick_scan(path)
@@ -513,7 +494,7 @@ def analyze(
                     f"[{file_path.name}] Reading tab {index}/{total}: "
                     f"{page.name} ({source})"
                 )
-            load_page(path, page, record.plant, mapping)
+            load_page(path, page, record.plant, mapping, known_workcenters=known_workcenters)
             if page_callback:
                 page_callback(index, total, page)
         record.status = "Analyzed"

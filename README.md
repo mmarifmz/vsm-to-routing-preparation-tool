@@ -12,7 +12,7 @@ The tool supports manufacturing analysts during preparation. It does not approve
 
 - Reads one or more `.vsdx` files directly from their XML package structure.
 - Detects pages, process shapes, connectors and workcentre codes.
-- Assigns each VSM file to a Plant and each page to a Department or CRID.
+- Assigns each VSM file to a Plant, suggests a cleaned CRID from each tab name, and requires user confirmation before generation.
 - Builds draft Change Rule rows from the visual process order and the confirmed workcentre reference.
 - Flags missing old workcentres, ambiguous mappings, sequence gaps and other review conditions.
 - Preserves analyst edits during selective reruns when the merge policy is selected.
@@ -28,7 +28,7 @@ The main interface uses eight gated stages. A stage unlocks only when its requir
 | --- | --- |
 | 0. Data sources | Select the three reference workbooks and explicitly confirm the sheets to load. |
 | 1. Load VSM | Add Visio files and assign each file to a Plant. |
-| 2. Assign context | Bind each VSM page to its Department or CRID. |
+| 2. Assign context | Select the VSM/Plant, review discovered WorkCenters by tab and count, then confirm each suggested Department/CRID. |
 | 3. Inspect process | Review detected shapes, connectors, workcentres and visual order. |
 | 4. Generate rule | Prepare Change Rule drafts for one CRID, a Plant or all loaded Plants. |
 | 5. Review rule | Resolve rows marked Review Required and validate readiness. |
@@ -57,9 +57,17 @@ The selected sheet must provide Plant (`WERKS` or `PLANT`), new workcentre (`ARB
 
 The user selects one MRP sheet and one Production Supervisor sheet. Each must contain a recognizable Plant column plus its corresponding code column.
 
-### Department and Plant mapping
+### Optional Department and Plant mapping
 
-The mapping may come from an Excel sheet containing Department or CRID, Plant and Work Center columns, or from a text file such as [the synthetic example](examples/Department_Plant_List_Sample.txt).
+The expert workspace can load a mapping from an Excel sheet containing Department or CRID, Plant and Work Center columns, or from a text file such as [the synthetic example](examples/Department_Plant_List_Sample.txt). Guided Step 2 does not present those records as established CRID ownership before the user confirms the VSM context.
+
+## Step 2 evidence and CRID confirmation
+
+Step 2 begins with **VSM files and plant assignment**. Selecting a file populates a discovery table immediately below it with every recognized WorkCenter, the VSM tab/page where it appears, and its occurrence count.
+
+The **Suggested** CRID comes only from the tab/page name. Common status phrases such as `Complete`, `Working`, `In Progress`, and `In Process`, plus common date formats, are removed before conversion to lowercase `snake_case`. For example, `Bearing Assembly - Complete` becomes `bearing_assembly`, and `Fab+Lining 2026-09-11 - Working` becomes `fab_lining`.
+
+The confirmed PTS03 WorkCenter source expands the scanner's recognition vocabulary, but it does not auto-assign a Department/CRID. The user must confirm the suggestion with **Apply** before Change Rule generation can use it.
 
 ## Draft Change Rule fields
 

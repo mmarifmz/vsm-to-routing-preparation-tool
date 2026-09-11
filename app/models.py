@@ -28,7 +28,20 @@ def department_slug(value: object) -> str:
     text = str(value or "").strip()
     text = re.sub(r"\b\d{4}[-/]\d{1,2}[-/]\d{1,2}\b", " ", text)
     text = re.sub(r"\b\d{1,2}[-/]\d{1,2}[-/]\d{4}\b", " ", text)
-    text = re.sub(r"\b(?:complete|completed)\b", " ", text, flags=re.IGNORECASE)
+    text = re.sub(
+        r"\b(?:work\s+in\s+progress|in\s+progress|in\s+process|complete|completed|working)\b",
+        " ",
+        text,
+        flags=re.IGNORECASE,
+    )
+    text = re.sub(
+        r"\b(?:jan(?:uary)?|feb(?:ruary)?|mar(?:ch)?|apr(?:il)?|may|jun(?:e)?|"
+        r"jul(?:y)?|aug(?:ust)?|sep(?:tember)?|oct(?:ober)?|nov(?:ember)?|dec(?:ember)?)"
+        r"\s+\d{1,2}(?:st|nd|rd|th)?[,]?\s+\d{4}\b",
+        " ",
+        text,
+        flags=re.IGNORECASE,
+    )
     text = re.sub(r"[^A-Za-z0-9]+", "_", text)
     return re.sub(r"_+", "_", text).strip("_").lower()
 

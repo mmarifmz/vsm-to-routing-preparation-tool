@@ -220,6 +220,7 @@ class App:
         self.highlight_workcenters = tk.BooleanVar(value=False)
         self.show_process_path = tk.BooleanVar(value=False)
         self.show_shape_ids = tk.BooleanVar(value=False)
+        self.department = tk.StringVar()
         self.plant_saved_value = ""
         self.dirty_reasons = set()
         self.ui_settings_path = Path.home() / ".vsdx_routing_generation_ui.json"
@@ -577,27 +578,33 @@ class App:
             pady=(6, 0),
         )
 
-        # Step 2 replaces source-file editing with the mapping records that
-        # actually guide the Plant/CRID assignment decision.
+        # Step 2 shows evidence discovered in the selected VSM. CRID ownership
+        # is intentionally not implied before the user confirms each tab.
         self.context_mapping_frame = ttk.Frame(source_card, padding=8)
         self.context_mapping_frame.columnconfigure(0, weight=1)
-        self.context_mapping_frame.rowconfigure(2, weight=1)
-        self.context_mapping_title = tk.StringVar(value="Available mapping")
+        self.context_mapping_frame.rowconfigure(3, weight=1)
+        self.context_mapping_title = tk.StringVar(value="Select a VSM file to view discovered workcenters")
         ttk.Label(self.context_mapping_frame, textvariable=self.context_mapping_title, font=("Segoe UI", 9, "bold")).grid(row=0, column=0, sticky="w")
+        self.context_mapping_summary = tk.StringVar(value="No VSM selected")
+        ttk.Label(self.context_mapping_frame, textvariable=self.context_mapping_summary, style="Sub.TLabel").grid(row=1, column=0, sticky="w", pady=(3, 2))
         self.context_mapping_filter = tk.StringVar()
         mapping_filter = ttk.Entry(self.context_mapping_frame, textvariable=self.context_mapping_filter)
-        mapping_filter.grid(row=1, column=0, sticky="ew", pady=(5, 5))
-        mapping_filter.insert(0, "Filter CRID or workcenter")
+        mapping_filter.grid(row=2, column=0, sticky="ew", pady=(5, 5))
+        mapping_filter.insert(0, "Filter workcenter or VSM tab")
         mapping_filter.bind("<FocusIn>", self.clear_mapping_filter_hint)
         mapping_filter.bind("<KeyRelease>", lambda _event: self.refresh_context_mapping())
         map_table = ttk.Frame(self.context_mapping_frame)
-        map_table.grid(row=2, column=0, sticky="nsew")
+        map_table.grid(row=3, column=0, sticky="nsew")
         map_table.columnconfigure(0, weight=1)
         map_table.rowconfigure(0, weight=1)
-        self.context_mapping_tree = ttk.Treeview(map_table, columns=("crid", "wc", "source"), show="headings", height=10)
-        for column, title, width in [("crid", "CRID", 105), ("wc", "WORKCENTER", 105), ("source", "SOURCE", 120)]:
+        self.context_mapping_tree = ttk.Treeview(map_table, columns=("wc", "tab", "count"), show="headings", height=10)
+        for column, title, width, anchor in [
+            ("wc", "WORKCENTER", 140, "w"),
+            ("tab", "VSM TAB / PAGE", 400, "w"),
+            ("count", "COUNT", 70, "center"),
+        ]:
             self.context_mapping_tree.heading(column, text=title)
-            self.context_mapping_tree.column(column, width=width, anchor="w")
+            self.context_mapping_tree.column(column, width=width, anchor=anchor, stretch=False)
         mapping_y = ttk.Scrollbar(map_table, orient=tk.VERTICAL, command=self.context_mapping_tree.yview)
         self.context_mapping_tree.configure(yscrollcommand=mapping_y.set)
         self.context_mapping_tree.grid(row=0, column=0, sticky="nsew")
@@ -748,20 +755,20 @@ class App:
         self.page_card = page_card
         page_card.grid(row=0, column=0, sticky="ew", pady=(0, 8))
         page_card.columnconfigure(0, weight=1)
-        page_card.rowconfigure(1, weight=1)
+        page_card.rowconfigure(2, weight=1)
 
         columns = ("tab", "shapes", "wcs", "suggested", "confidence", "assigned", "status", "clear_assignment")
         self.page_tree = ttk.Treeview(page_card, columns=columns, show="headings", height=8, selectmode="browse")
         page_specs = [
-            ("tab", "Tab", 135, "w"), ("shapes", "Shp", 42, "center"),
-            ("wcs", "WC", 32, "center"), ("suggested", "Suggested", 75, "w"),
-            ("confidence", "Confidence", 70, "center"), ("assigned", "Assigned", 95, "w"),
-            ("status", "Status", 105, "center"),
+            ("tab", "Tab", 180, "w"), ("shapes", "Shp", 42, "center"),
+            ("wcs", "WC", 38, "center"), ("suggested", "Suggested", 115, "w"),
+            ("confidence", "Source", 75, "center"), ("assigned", "Assigned", 105, "w"),
+            ("status", "Status", 120, "center"),
             ("clear_assignment", "✕", 28, "center"),
         ]
         for column, title, width, anchor in page_specs:
             self.page_tree.heading(column, text=title)
-            self.page_tree.column(column, width=width, anchor=anchor)
+            self.page_tree.column(column, width=width, anchor=anchor, stretch=False)
         page_toolbar = ttk.Frame(page_card)
         page_toolbar.grid(row=0, column=0, sticky="ew", pady=(0, 5))
         page_toolbar.columnconfigure(2, weight=1)
@@ -784,16 +791,41 @@ class App:
         )
         ttk.Label(
             page_toolbar,
-            text="Choose a VSM tab, then select an action.",
+            text="Refresh the selected tab or all tabs:",
             style="Sub.TLabel",
-        ).grid(row=0, column=2, sticky="w")
+        ).grid(row=1, column=0, columnspan=3, sticky="w", pady=(5, 0))
         self.regenerate_all_btn = ttk.Button(page_toolbar, text="Regenerate All", command=self.regenerate_all_vsms, style="Primary.TButton", state=tk.DISABLED)
-        self.regenerate_all_btn.grid(row=0, column=4, sticky="e")
+        self.regenerate_all_btn.grid(row=1, column=4, sticky="e", pady=(5, 0))
         self.selected_tab_btn = ttk.Button(page_toolbar, text="Selected Tab", command=self.analyze_selected_vsm, style="Secondary.TButton", state=tk.DISABLED)
-        self.selected_tab_btn.grid(row=0, column=3, sticky="e", padx=(0, 8))
-        ToolTip(self.selected_tab_btn, "Refreshes the selected VSM tab only: its shape metadata, detected workcentres and CRID mapping evidence are reloaded without re-running every tab.")
+        self.selected_tab_btn.grid(row=1, column=3, sticky="e", padx=(0, 8), pady=(5, 0))
+        ToolTip(self.selected_tab_btn, "Refreshes the selected VSM tab only: its shape metadata, discovered WorkCenters and tab-name CRID suggestion are reloaded without re-running every tab.")
         ToolTip(self.regenerate_all_btn, "Runs the established full metadata analysis for every tab in every loaded VSDX file.")
-        self.page_tree.grid(row=1, column=0, sticky="ew")
+        self.context_assignment_bar = ttk.Frame(page_card, padding=(0, 2, 0, 5))
+        self.context_assignment_bar.grid(row=1, column=0, sticky="ew")
+        self.context_assignment_bar.columnconfigure(1, weight=1)
+        ttk.Label(
+            self.context_assignment_bar,
+            text="Selected tab Department / CRID",
+            font=("Segoe UI", 9, "bold"),
+        ).grid(row=0, column=0, sticky="w", padx=(0, 8))
+        self.context_department_combo = ttk.Combobox(
+            self.context_assignment_bar,
+            textvariable=self.department,
+            state="normal",
+        )
+        self.context_department_combo.grid(row=0, column=1, sticky="ew", padx=(0, 8))
+        ttk.Button(
+            self.context_assignment_bar,
+            text="Apply",
+            command=self.apply_department,
+        ).grid(row=0, column=2, padx=(0, 6))
+        ttk.Button(
+            self.context_assignment_bar,
+            text="✕ Clear",
+            command=self.clear_selected_department,
+        ).grid(row=0, column=3)
+        self.context_assignment_bar.grid_remove()
+        self.page_tree.grid(row=2, column=0, sticky="ew")
         self.page_tree.bind("<<TreeviewSelect>>", self.page_selected)
         self.page_tree.bind("<ButtonRelease-1>", self.page_click)
         self.page_tree.bind("<Double-1>", self.page_double)
@@ -1010,11 +1042,11 @@ class App:
         )
         assignment_card.columnconfigure(0, weight=1)
 
-        self.department = tk.StringVar()
         self.department_combo = ttk.Combobox(
             assignment_card,
             textvariable=self.department,
             state="normal",
+            width=16,
         )
         self.department_combo.grid(
             row=0, column=0, sticky="ew", padx=(0, 6)
@@ -1043,6 +1075,7 @@ class App:
         self.meta = tk.Text(
             metadata_card,
             height=14,
+            width=36,
             wrap="word",
             font=("Consolas", 9),
             relief=tk.FLAT,
@@ -1053,7 +1086,7 @@ class App:
 
         candidate_card = ttk.Labelframe(
             self.right,
-            text="Possible Department / CRID",
+            text="Tab-name Department / CRID suggestion",
             style="Card.TLabelframe",
         )
         candidate_card.grid(
@@ -1069,18 +1102,18 @@ class App:
             height=8,
         )
         self.candidates.heading(
-            "dept", text="Department / CRID"
+            "dept", text="Suggested CRID"
         )
-        self.candidates.heading("match", text="Match")
+        self.candidates.heading("match", text="Source")
         self.candidates.heading(
-            "evidence", text="Workcenters / source"
+            "evidence", text="Discovered workcenters"
         )
-        self.candidates.column("dept", width=130, anchor="w")
+        self.candidates.column("dept", width=105, anchor="w", stretch=False)
         self.candidates.column(
-            "match", width=52, anchor="center"
+            "match", width=50, anchor="center", stretch=False
         )
         self.candidates.column(
-            "evidence", width=190, anchor="w"
+            "evidence", width=145, anchor="w", stretch=False
         )
         self.candidates.grid(row=0, column=0, sticky="nsew")
         self.candidates.bind(
@@ -1234,6 +1267,15 @@ class App:
         self.routing_reference_info.set(f"Step 0 WorkCenter reference: {Path(path).name} / {sheet} ({len(reference.records):,} rows)")
         self.status.configure(text="PTS03 WorkCenter source confirmed")
         self.log(f"Step 0 WorkCenter confirmed: {Path(path).name} | tab: {sheet}")
+        # Re-scan cached VSM text with the confirmed WorkCenter vocabulary.
+        # This updates discovery evidence only; it does not assign a CRID.
+        for file in self.files:
+            known_workcenters = self._valid_workcenters(file)
+            for page in file.pages:
+                if page.loaded:
+                    apply_mapping(page, file.plant, self.mapping, known_workcenters)
+        self.refresh_context_mapping()
+        self.refresh_pages()
         self.refresh_step0_state()
 
     def confirm_code_source(self):
@@ -1323,7 +1365,7 @@ class App:
         panes = {
             0: [(self.left, 12)],
             1: [(self.left, 12)],
-            2: [(self.left, 3), (self.center, 6), (self.right, 3)],
+            2: [(self.left, 5), (self.center, 7)],
             3: [(self.center, 8), (self.right, 4)],
             4: [(self.center, 12)],
             5: [(self.center, 12)],
@@ -1344,22 +1386,24 @@ class App:
         for card in (self.source_intake_card, self.source_card, self.files_card, self.action_card):
             card.grid_remove()
         if stage == 0:
-            self.source_intake_card.grid()
+            self.source_intake_card.grid(row=0, column=0, sticky="nsew", pady=(0, 8))
         elif stage == 1:
-            self.files_card.grid()
+            self.files_card.grid(row=2, column=0, sticky="nsew")
         elif stage == 2:
-            self.source_card.grid()
-            self.files_card.grid()
+            self.files_card.grid(row=1, column=0, sticky="nsew", pady=(0, 8))
+            self.source_card.grid(row=2, column=0, sticky="nsew")
         elif stage == 7:
-            self.files_card.grid()
-            self.action_card.grid()
+            self.files_card.grid(row=2, column=0, sticky="nsew")
+            self.action_card.grid(row=3, column=0, sticky="ew", pady=(8, 0))
         self.show_context_mapping(stage == 2)
         if stage == 2:
             # Context assignment deliberately excludes generation/export
             # controls; the user only sees the file, Plant, tab and CRID job.
             self.center_notebook.grid_remove()
+            self.context_assignment_bar.grid()
         else:
             self.center_notebook.grid()
+            self.context_assignment_bar.grid_remove()
         self.configure_center_tabs(inspect_only=stage == 3)
         if stage == 3:
             self.center_notebook.select(0)
@@ -1370,7 +1414,7 @@ class App:
         titles = [
             ("Step 0 of 7 — Data sources", "Confirm the exact workbook tabs used for P41, WorkCenter and MRP/Supervisor data."),
             ("Step 1 of 7 — Load VSM files", "Upload Visio files only after all three raw business sources are ready."),
-            ("Step 2 of 7 — Assign context", "Assign Plant and CRID against the selected VSM tab."),
+            ("Step 2 of 7 — Assign context", "Confirm the VSM Plant, review discovered workcenters, then assign each tab's suggested CRID."),
             ("Step 3 of 7 — Inspect process", "Review the Visio process and detected workcentres before creating rules."),
             ("Step 4 of 7 — Generate Change Rule", "Generate rules for the selected CRID, Plant, or all loaded Plants."),
             ("Step 5 of 7 — Review Change Rule", "Resolve Review Required records, then validate readiness."),
@@ -1386,6 +1430,7 @@ class App:
 
     def show_advanced(self):
         """Power-user escape hatch: restores the original all-pane workspace."""
+        self.current_stage = -1
         for pane in (self.left, self.center, self.right):
             try:
                 self.body.forget(pane)
@@ -1397,10 +1442,11 @@ class App:
         self.center_notebook.grid()
         self.configure_center_tabs(inspect_only=False)
         self.page_card.grid()
+        self.context_assignment_bar.grid_remove()
         self.source_intake_card.grid_remove()
-        self.source_card.grid()
-        self.files_card.grid()
-        self.action_card.grid()
+        self.source_card.grid(row=1, column=0, sticky="ew", pady=(0, 8))
+        self.files_card.grid(row=2, column=0, sticky="nsew")
+        self.action_card.grid(row=3, column=0, sticky="ew", pady=(8, 0))
         self.show_context_mapping(False)
         self.stage_var.set("Advanced workspace")
         self.stage_help_var.set("All controls are visible for experienced reviewers; routing logic is unchanged.")
@@ -1421,18 +1467,27 @@ class App:
             self.center_notebook.select(self.preview_card)
 
     def clear_mapping_filter_hint(self, _event=None):
-        if self.context_mapping_filter.get() == "Filter CRID or workcenter":
+        if self.context_mapping_filter.get() == "Filter workcenter or VSM tab":
             self.context_mapping_filter.set("")
 
     def show_context_mapping(self, show: bool):
         if not hasattr(self, "context_mapping_frame"):
             return
         if show:
-            self.source_card.configure(text="Active Plant mapping", height=300)
+            self.files_card.configure(width=650, height=250)
+            self.files_card.grid_propagate(False)
+            for column, width in (("file", 300), ("plant", 80), ("pages", 60), ("status", 100)):
+                self.file_tree.column(column, width=width, stretch=False)
+            self.file_tree.configure(height=4)
+            self.source_card.configure(text="Discovered VSM workcenters", height=320)
             self.source_tabs.grid_remove()
             self.context_mapping_frame.grid()
             self.refresh_context_mapping()
         else:
+            self.files_card.grid_propagate(True)
+            for column in ("file", "plant", "pages", "status"):
+                self.file_tree.column(column, stretch=True)
+            self.file_tree.configure(height=7)
             self.source_card.configure(text="Department / CRID mapping", height=180)
             self.context_mapping_frame.grid_remove()
             self.source_tabs.grid()
@@ -1441,21 +1496,34 @@ class App:
         if not hasattr(self, "context_mapping_tree"):
             return
         self.context_mapping_tree.delete(*self.context_mapping_tree.get_children())
-        plant = norm(self.selected_file.plant) if self.selected_file else ""
+        file = self.selected_file
         query = self.context_mapping_filter.get().strip().upper()
-        if query == "FILTER CRID OR WORKCENTER":
+        if query == "FILTER WORKCENTER OR VSM TAB":
             query = ""
-        title = f"Mapping records for Plant {plant}" if plant else "Select a VSDX file to view its Plant mapping"
-        self.context_mapping_title.set(title)
-        if not self.mapping or not plant:
+        if not file:
+            self.context_mapping_title.set("Select a VSM file to view discovered workcenters")
+            self.context_mapping_summary.set("No VSM selected")
             return
-        records = [record for record in self.mapping.records if norm(record.plant) == plant]
-        for record in sorted(records, key=lambda item: (norm(item.department), norm(item.workcenter), item.source_sheet)):
-            searchable = " ".join([norm(record.department), norm(record.workcenter), record.source_sheet, record.source_file]).upper()
-            if query and query not in searchable:
-                continue
-            source = record.source_sheet or Path(record.source_file).name or "Manual list"
-            self.context_mapping_tree.insert("", tk.END, values=(norm(record.department), norm(record.workcenter) or "—", source))
+        self.context_mapping_title.set(f"Discovered workcenters in {file.file_name}")
+        loaded_pages = [page for page in file.pages if page.loaded]
+        rows = [
+            (workcenter, page.name, count)
+            for page in loaded_pages
+            for workcenter, count in page.workcenter_counts.items()
+        ]
+        unique_workcenters = {workcenter for workcenter, _tab, _count in rows}
+        pending = len(file.pages) - len(loaded_pages)
+        summary = (
+            f"{len(unique_workcenters):,} unique workcenters across "
+            f"{len(loaded_pages):,} analyzed tabs"
+        )
+        if pending:
+            summary += f" • {pending:,} tabs pending — use Regenerate All"
+        self.context_mapping_summary.set(summary)
+        for workcenter, tab_name, count in sorted(rows, key=lambda item: (item[0], item[1])):
+            searchable = f"{workcenter} {tab_name}".upper()
+            if not query or query in searchable:
+                self.context_mapping_tree.insert("", tk.END, values=(workcenter, tab_name, count))
 
     def mark_dirty(self, reason: str):
         self.dirty_reasons.add(reason)
@@ -1853,7 +1921,7 @@ class App:
         for file in self.files:
             for page in file.pages:
                 if page.loaded:
-                    apply_mapping(page, file.plant, self.mapping)
+                    apply_mapping(page, file.plant, self.mapping, self._valid_workcenters(file))
 
         self.refresh_dept_values()
         if self.selected_page:
@@ -2167,11 +2235,7 @@ class App:
                         else ("…" if page.loading else "")
                     ),
                     page.suggested_department,
-                    (
-                        f"{page.confidence:.0%}"
-                        if page.candidate_counts
-                        else ""
-                    ),
+                    page.suggestion_source,
                     page.assigned_department,
                     self.page_status(page),
                     "✕" if page.assigned_department else "",
@@ -2201,6 +2265,7 @@ class App:
 
         self.department.set(
             self.selected_page.assigned_department
+            or self.selected_page.suggested_department
         )
         self.refresh_dept_values()
         self.show_page_meta()
@@ -2252,6 +2317,7 @@ class App:
                     file.plant,
                     self.mapping,
                     force=force,
+                    known_workcenters=self._valid_workcenters(file),
                 )
                 self.events.put(
                     (
@@ -2278,7 +2344,7 @@ class App:
     def page_click(self, event):
         row = self.page_tree.identify_row(event.y)
         column = self.page_tree.identify_column(event.x)
-        if row and column == "#7":
+        if row and column == "#8":
             self.clear_page_department(row)
 
     def page_double(self, event):
@@ -2300,22 +2366,15 @@ class App:
             page.candidate_counts if page else []
         )
 
-        if self.mapping and self.selected_file:
-            values.update(
-                self.mapping.departments_for_plant(
-                    self.selected_file.plant
-                )
-            )
-
         if page and page.assigned_department:
             values.add(page.assigned_department)
 
         return sorted(values)
 
     def refresh_dept_values(self):
-        self.department_combo["values"] = self.dept_values(
-            self.selected_page
-        )
+        values = self.dept_values(self.selected_page)
+        self.department_combo["values"] = values
+        self.context_department_combo["values"] = values
 
     def set_page_dept(self, item_id: str, value: str):
         page = self.page_map.get(item_id)
@@ -2480,15 +2539,29 @@ class App:
             self._store_rows_on_page(self.selected_page, rows)
 
     def _valid_workcenters(self, file: FileRecord):
-        return self.mapping.workcenters_for_plant(file.plant) if self.mapping else []
+        values = set(self.mapping.workcenters_for_plant(file.plant) if self.mapping else [])
+        if self.routing_reference:
+            values.update(
+                norm(row.new_wc)
+                for row in self.routing_reference.records
+                if norm(row.plant) == norm(file.plant) and norm(row.new_wc)
+            )
+        return sorted(values)
 
     def _page_crid(self, page: PageRecord) -> str:
         if page.assignment_mode == "cleared":
             return ""
-        return page.assigned_department or page.suggested_department
+        return page.assigned_department
 
     def _ensure_page_for_routing(self, file: FileRecord, page: PageRecord, force: bool = False):
-        load_page(file.path, page, file.plant, self.mapping, force=force)
+        load_page(
+            file.path,
+            page,
+            file.plant,
+            self.mapping,
+            force=force,
+            known_workcenters=self._valid_workcenters(file),
+        )
         return self._page_crid(page)
 
     def _history_item(self, file: FileRecord, page: PageRecord):
@@ -3274,6 +3347,7 @@ class App:
                         ),
                         page_callback,
                         pages=file.pages,
+                        known_workcenters=self._valid_workcenters(file),
                     )
 
                     for page in analyzed.pages:
@@ -3439,13 +3513,6 @@ class App:
             self.show_meta("")
             return
 
-        available = (
-            self.mapping.departments_for_plant(
-                self.selected_file.plant
-            )
-            if self.mapping and self.selected_file
-            else []
-        )
         lines = [
             f"Tab name       : {page.name}",
             f"Internal name  : {page.name_u}",
@@ -3479,19 +3546,11 @@ class App:
                 f"{page.suggestion_source or '-'}"
             ),
             (
-                f"Confidence     : {page.confidence:.1%}"
-                if page.candidate_counts
-                else "Confidence     : -"
-            ),
-            (
                 f"Assigned       : "
                 f"{page.assigned_department or '-'}"
             ),
             f"Assignment mode: {page.assignment_mode}",
-            (
-                f"Plant options  : "
-                f"{len(available):,} departments/CRIDs"
-            ),
+            f"CRID confirmation: {'Confirmed' if page.assigned_department else 'Required'}",
             "",
             "Detected workcenters:",
             (
@@ -3527,8 +3586,7 @@ class App:
         if not page:
             return
 
-        inserted = set()
-        for index, (department, count) in enumerate(
+        for index, (department, _count) in enumerate(
             page.candidate_counts.items()
         ):
             workcenters = ", ".join(
@@ -3544,36 +3602,10 @@ class App:
                 iid=f"matched-{index}",
                 values=(
                     department,
-                    count,
-                    workcenters or "Workcenter mapping",
+                    "Tab name",
+                    workcenters or "No workcenters detected yet",
                 ),
             )
-            inserted.add(department)
-
-        if self.mapping and self.selected_file:
-            available = self.mapping.departments_for_plant(
-                self.selected_file.plant
-            )
-            next_index = len(inserted)
-            for department in available:
-                if department in inserted:
-                    continue
-                sources = self.mapping.sources_for_department(
-                    self.selected_file.plant,
-                    department,
-                )
-                self.candidates.insert(
-                    "",
-                    tk.END,
-                    iid=f"available-{next_index}",
-                    values=(
-                        department,
-                        "",
-                        ", ".join(sources)
-                        or "Available for plant",
-                    ),
-                )
-                next_index += 1
 
     def poll(self):
         try:
@@ -3635,6 +3667,7 @@ class App:
                     )
                     self.refresh_files()
                     self.refresh_pages()
+                    self.refresh_context_mapping()
                     self.update_action_states()
 
                 elif kind == "error":
@@ -3678,6 +3711,7 @@ class App:
                     ):
                         self.status.configure(text="Preview ready")
                         self.refresh_pages()
+                        self.refresh_context_mapping()
                         self.show_page_meta()
                         self.show_candidates()
                         self.render_preview()
