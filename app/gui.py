@@ -3392,6 +3392,10 @@ class App:
                 f"{page.suggested_department or '-'}"
             ),
             (
+                f"Suggestion via : "
+                f"{page.suggestion_source or '-'}"
+            ),
+            (
                 f"Confidence     : {page.confidence:.1%}"
                 if page.candidate_counts
                 else "Confidence     : -"

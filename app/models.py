@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import re
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Dict, List, Optional, Set, Tuple
@@ -15,6 +16,21 @@ def norm(value: object) -> str:
     if text.endswith(".0") and text[:-2].isdigit():
         text = text[:-2]
     return text
+
+
+def department_slug(value: object) -> str:
+    """Return a stable, page-name-friendly department key.
+
+    Status words and common dates are removed before punctuation, spaces, and
+    separators are converted to underscores. Business CRIDs remain unchanged;
+    this key is used when a mapping source does not provide a department.
+    """
+    text = str(value or "").strip()
+    text = re.sub(r"\b\d{4}[-/]\d{1,2}[-/]\d{1,2}\b", " ", text)
+    text = re.sub(r"\b\d{1,2}[-/]\d{1,2}[-/]\d{4}\b", " ", text)
+    text = re.sub(r"\b(?:complete|completed)\b", " ", text, flags=re.IGNORECASE)
+    text = re.sub(r"[^A-Za-z0-9]+", "_", text)
+    return re.sub(r"_+", "_", text).strip("_").lower()
 
 
 def placeholder_wc(value: str) -> bool:
@@ -190,6 +206,7 @@ class PageRecord:
     candidate_counts: Dict[str, int] = field(default_factory=dict)
     candidate_wcs: Dict[str, Set[str]] = field(default_factory=dict)
     suggested_department: str = ""
+    suggestion_source: str = ""
     assigned_department: str = ""
     assignment_mode: str = "auto"  # auto, manual, or cleared
     confidence: float = 0.0

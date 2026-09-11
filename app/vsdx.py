@@ -8,7 +8,15 @@ from pathlib import Path
 from typing import Callable, Dict, List, Optional, Sequence, Set, Tuple
 from xml.etree import ElementTree as ET
 
-from .models import ConnectionRecord, FileRecord, MappingIndex, PageRecord, ShapeRecord, norm
+from .models import (
+    ConnectionRecord,
+    FileRecord,
+    MappingIndex,
+    PageRecord,
+    ShapeRecord,
+    department_slug,
+    norm,
+)
 
 VNS = "http://schemas.microsoft.com/office/visio/2012/main"
 RNS = "http://schemas.openxmlformats.org/officeDocument/2006/relationships"
@@ -28,6 +36,59 @@ IDENTITY: Matrix = (1.0, 0.0, 0.0, 1.0, 0.0, 0.0)
 
 class VsdxReadError(RuntimeError):
     pass
+
+
+_DEPARTMENT_TOKEN_ALIASES = {
+    "assy": "assembly",
+    "canti": "cantilever",
+    "fab": "fabrication",
+    "mac": "machining",
+    "rub": "rubber",
+}
+_DEPARTMENT_COMPOUNDS = {
+    "cutrub": ("cut", "rubber"),
+    "mat4sub": ("material", "subcon"),
+    "mat4subcon": ("material", "subcon"),
+    "rubfab": ("rubber", "fabrication"),
+}
+_DEPARTMENT_NOISE = {"and", "build", "for", "the"}
+
+
+def _department_terms(value: object) -> Tuple[str, ...]:
+    terms: List[str] = []
+    for token in department_slug(value).split("_"):
+        expanded = _DEPARTMENT_COMPOUNDS.get(token, (token,))
+        for item in expanded:
+            item = _DEPARTMENT_TOKEN_ALIASES.get(item, item)
+            if item and item not in _DEPARTMENT_NOISE:
+                terms.append(item)
+    return tuple(sorted(set(terms)))
+
+
+def page_department_candidate(
+    page_name: str,
+    known_departments: Sequence[str] = (),
+) -> str:
+    """Infer a department from a current completed/dated VSM page name."""
+    lowered = str(page_name or "").lower()
+    if "combined into" in lowered or re.search(r"\bold\b", lowered):
+        return ""
+    has_date = bool(
+        re.search(r"\b\d{4}[-/]\d{1,2}[-/]\d{1,2}\b", lowered)
+        or re.search(r"\b\d{1,2}[-/]\d{1,2}[-/]\d{4}\b", lowered)
+    )
+    if not has_date and not re.search(r"\bcomplete(?:d)?\b", lowered):
+        return ""
+
+    slug = department_slug(page_name)
+    if not slug:
+        return ""
+
+    page_terms = _department_terms(slug)
+    for department in known_departments:
+        if page_terms and page_terms == _department_terms(department):
+            return norm(department)
+    return slug
 
 
 def flt(value, default=None):
@@ -361,12 +422,22 @@ def apply_mapping(page: PageRecord, plant: str, mapping: Optional[MappingIndex])
             else:
                 unmatched.add(workcenter)
 
+    known_departments = mapping.departments_for_plant(plant) if mapping else []
+    name_candidate = page_department_candidate(page.name, known_departments)
+    name_had_workcenter_votes = bool(name_candidate and votes.get(name_candidate))
+    if name_candidate:
+        # A completed/dated page title is stronger department evidence than a
+        # degenerate mapping in which every workcentre points to one CRID.
+        votes[name_candidate] += max(sum(votes.values()) + 1, 1)
+        candidate_workcenters[name_candidate].update(workcenter_counts)
+
     page.workcenter_counts = dict(sorted(workcenter_counts.items()))
     page.candidate_counts = dict(sorted(votes.items(), key=lambda item: (-item[1], item[0])))
     page.candidate_wcs = dict(candidate_workcenters)
     page.matched_wcs = sorted(matched)
     page.unmatched_wcs = sorted(unmatched)
     page.suggested_department = ""
+    page.suggestion_source = ""
     page.confidence = 0.0
     if not votes and page.assignment_mode == "auto":
         page.assigned_department = ""
@@ -375,6 +446,14 @@ def apply_mapping(page: PageRecord, plant: str, mapping: Optional[MappingIndex])
         department, count = sorted(votes.items(), key=lambda item: (-item[1], item[0]))[0]
         page.suggested_department = department
         page.confidence = count / sum(votes.values())
+        if department == name_candidate:
+            page.suggestion_source = (
+                "Page name + workcenter mapping"
+                if name_had_workcenter_votes
+                else "Page name inference"
+            )
+        else:
+            page.suggestion_source = "Workcenter mapping"
         if page.assignment_mode == "auto":
             page.assigned_department = department
         elif page.assignment_mode == "cleared":

@@ -129,6 +129,7 @@ def _page_to_dict(page: PageRecord) -> Dict[str, Any]:
             for department, workcenters in page.candidate_wcs.items()
         },
         "suggested_department": page.suggested_department,
+        "suggestion_source": page.suggestion_source,
         "assigned_department": page.assigned_department,
         "assignment_mode": page.assignment_mode,
         "confidence": page.confidence,
@@ -166,6 +167,7 @@ def _page_from_dict(data: Dict[str, Any]) -> PageRecord:
             for key, values in data.get("candidate_wcs", {}).items()
         },
         suggested_department=str(data.get("suggested_department", "")),
+        suggestion_source=str(data.get("suggestion_source", "")),
         assigned_department=str(data.get("assigned_department", "")),
         assignment_mode=str(data.get("assignment_mode", "auto") or "auto"),
         confidence=float(data.get("confidence", 0.0) or 0.0),

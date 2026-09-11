@@ -2,6 +2,9 @@
 
 ## 1.3.8
 
+- Added completed/dated VSM page-name inference when a Plant mapping is incomplete, with stable snake_case keys such as `bearing_assembly` and `fab_lining`.
+- Added alias reconciliation so descriptive page names retain an existing business CRID when one is available, plus visible suggestion provenance in Step 2.
+- Excluded pages marked `Old` or `Combined into` from page-name inference and added automated regression tests for CA06-style detection.
 - Added a gated **Step 0 — Data sources** for the raw P41 Routing extraction, PTS03 WorkCenter mapping, and MRP/Production Supervisor reference.
 - Added workbook-tab discovery and an explicit **Confirm & Load** action so no raw sheet is consumed immediately after file browsing.
 - Locked VSM file and folder upload until all three source contracts pass validation.
