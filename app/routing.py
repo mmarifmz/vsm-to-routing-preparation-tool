@@ -166,15 +166,22 @@ def clean_operation_description(text: str, workcenters: Sequence[str], fallback:
 
 
 def _wc_shapes(page: PageRecord) -> List[ShapeRecord]:
-    # Leaf shapes are preferred; duplicate nested group text is suppressed.
+    # Leaf shapes are preferred; duplicate nested group text at the same visual
+    # location is suppressed. The same WC at two different process steps must
+    # remain two rows because SEQ/SUB are assigned within the CRID flow.
     result: List[ShapeRecord] = []
-    seen: Set[Tuple[str, Tuple[str, ...]]] = set()
+    seen: Set[Tuple[str, Tuple[str, ...], Optional[float], Optional[float]]] = set()
     for shape in page.shapes:
         if not shape.workcenters:
             continue
         if shape.has_children:
             continue
-        key = (re.sub(r"\s+", " ", shape.text.strip()).upper(), tuple(sorted(shape.workcenters)))
+        key = (
+            re.sub(r"\s+", " ", shape.text.strip()).upper(),
+            tuple(sorted(shape.workcenters)),
+            round(shape.pin_x, 3) if shape.pin_x is not None else None,
+            round(shape.pin_y, 3) if shape.pin_y is not None else None,
+        )
         if key in seen:
             continue
         seen.add(key)
@@ -202,11 +209,210 @@ def _fallback_sort_key(shape: ShapeRecord) -> Tuple[float, float, str]:
     return (round(x, 3), -round(y, 3), shape.shape_id)
 
 
+def _subsequence_sort_key(shape: ShapeRecord) -> Tuple[float, float, str]:
+    """Order parallel operations top-to-bottom within one visual SEQ column."""
+    x = shape.pin_x if shape.pin_x is not None else 0.0
+    y = shape.pin_y if shape.pin_y is not None else 0.0
+    return (-round(y, 3), round(x, 3), shape.shape_id)
+
+
+def _geometry_layers(shapes: List[ShapeRecord], x_tolerance: float = 0.35) -> List[List[ShapeRecord]]:
+    """Group visually aligned operations into department-level SEQ columns."""
+    positioned = sorted(shapes, key=_fallback_sort_key)
+    layers: List[List[ShapeRecord]] = []
+    anchors: List[float] = []
+    for shape in positioned:
+        if shape.pin_x is None:
+            layers.append([shape])
+            anchors.append(float("inf"))
+            continue
+        x = float(shape.pin_x)
+        if layers and anchors[-1] != float("inf") and abs(x - anchors[-1]) <= x_tolerance:
+            layers[-1].append(shape)
+            anchors[-1] = sum(float(item.pin_x) for item in layers[-1] if item.pin_x is not None) / len(layers[-1])
+        else:
+            layers.append([shape])
+            anchors.append(x)
+    return layers
+
+
+def _point_to_shape_distance(x: float, y: float, shape: ShapeRecord) -> float:
+    """Return the gap from a point to a shape's rectangular footprint."""
+    if shape.pin_x is None or shape.pin_y is None:
+        return float("inf")
+    half_width = max(float(shape.width or 0.0) / 2.0, 0.0)
+    half_height = max(float(shape.height or 0.0) / 2.0, 0.0)
+    dx = max(abs(x - float(shape.pin_x)) - half_width, 0.0)
+    dy = max(abs(y - float(shape.pin_y)) - half_height, 0.0)
+    return (dx * dx + dy * dy) ** 0.5
+
+
+def _resolved_process_edges(page: PageRecord) -> Set[Tuple[str, str]]:
+    """Return directed process edges, repairing visibly attached loose ends."""
+    by_id = {shape.shape_id: shape for shape in page.shapes}
+    process_shapes = [shape for shape in page.shapes if shape.kind != "connector"]
+    edges: Set[Tuple[str, str]] = set()
+
+    def nearest_shape(x: Optional[float], y: Optional[float], excluded: Set[str]) -> str:
+        if x is None or y is None:
+            return ""
+        candidates = [
+            (_point_to_shape_distance(float(x), float(y), shape), shape.shape_id)
+            for shape in process_shapes
+            if shape.shape_id not in excluded
+        ]
+        if not candidates:
+            return ""
+        distance, shape_id = min(candidates)
+        # An unglued connector endpoint normally stops on, or just beside, the
+        # target box. A tight threshold avoids inventing long-distance links.
+        return shape_id if distance <= 0.15 else ""
+
+    for connection in page.connections:
+        source = connection.source_shape_id if connection.source_shape_id in by_id else ""
+        target = connection.target_shape_id if connection.target_shape_id in by_id else ""
+        connector = by_id.get(connection.connector_id)
+        if connector is not None:
+            if not source:
+                source = nearest_shape(connector.begin_x, connector.begin_y, {target})
+            if not target:
+                target = nearest_shape(connector.end_x, connector.end_y, {source})
+        if source and target and source != target:
+            edges.add((source, target))
+    return edges
+
+
+def _functional_layers(shapes: List[ShapeRecord], page: PageRecord) -> List[List[ShapeRecord]]:
+    """Place WC labels on their connected process steps and follow flow order."""
+    edges = _resolved_process_edges(page)
+    if not edges:
+        return []
+
+    by_id = {shape.shape_id: shape for shape in page.shapes}
+    nodes = {shape_id for edge in edges for shape_id in edge}
+    outgoing: Dict[str, Set[str]] = defaultdict(set)
+    incoming: Dict[str, Set[str]] = defaultdict(set)
+    for source, target in edges:
+        outgoing[source].add(target)
+        incoming[target].add(source)
+
+    component: Dict[str, int] = {}
+    component_id = 0
+    for start in sorted(nodes):
+        if start in component:
+            continue
+        component_id += 1
+        pending = [start]
+        component[start] = component_id
+        while pending:
+            source = pending.pop()
+            neighbours = outgoing.get(source, set()) | incoming.get(source, set())
+            for target in neighbours:
+                if target not in component:
+                    component[target] = component_id
+                    pending.append(target)
+
+    indegree = {shape_id: len(incoming.get(shape_id, set())) for shape_id in nodes}
+    current = deque(sorted(shape_id for shape_id, degree in indegree.items() if degree == 0))
+    depth = {shape_id: 0 for shape_id in current}
+    visited: Set[str] = set()
+    while current:
+        source = current.popleft()
+        visited.add(source)
+        for target in sorted(outgoing.get(source, set())):
+            depth[target] = max(depth.get(target, 0), depth[source] + 1)
+            indegree[target] -= 1
+            if indegree[target] == 0:
+                current.append(target)
+
+    if len(visited) != len(nodes):
+        return []
+
+    process_nodes = [
+        by_id[shape_id]
+        for shape_id in nodes
+        if shape_id in by_id and by_id[shape_id].kind != "connector"
+    ]
+    assigned: Dict[str, int] = {}
+    assigned_component: Dict[str, int] = {}
+    for shape in shapes:
+        if shape.shape_id in depth:
+            assigned[shape.shape_id] = depth[shape.shape_id]
+            assigned_component[shape.shape_id] = component[shape.shape_id]
+            continue
+
+        parent_id = shape.parent_id
+        while parent_id:
+            if parent_id in depth:
+                assigned[shape.shape_id] = depth[parent_id]
+                assigned_component[shape.shape_id] = component[parent_id]
+                break
+            parent = by_id.get(parent_id)
+            parent_id = parent.parent_id if parent is not None else ""
+        if shape.shape_id in assigned or shape.pin_x is None or shape.pin_y is None:
+            continue
+
+        candidates = []
+        for process in process_nodes:
+            if process.pin_x is None or process.pin_y is None:
+                continue
+            distance = (
+                (float(process.pin_x) - float(shape.pin_x)) ** 2
+                + (float(process.pin_y) - float(shape.pin_y)) ** 2
+            ) ** 0.5
+            candidates.append((distance, process.shape_id))
+        if candidates:
+            distance, process_id = min(candidates)
+            if distance <= 0.85:
+                assigned[shape.shape_id] = depth[process_id]
+                assigned_component[shape.shape_id] = component[process_id]
+
+    # Long WC lists are commonly stacked under one connected process box. Once
+    # one label is anchored, visually aligned labels inherit that same stage.
+    for shape in shapes:
+        if shape.shape_id in assigned or shape.pin_x is None:
+            continue
+        aligned = [
+            other
+            for other in shapes
+            if other.shape_id in assigned
+            and other.pin_x is not None
+            and abs(float(other.pin_x) - float(shape.pin_x)) <= 0.35
+        ]
+        if aligned:
+            nearest = min(
+                aligned,
+                key=lambda other: abs(float(other.pin_y or 0.0) - float(shape.pin_y or 0.0)),
+            )
+            assigned[shape.shape_id] = assigned[nearest.shape_id]
+            assigned_component[shape.shape_id] = assigned_component[nearest.shape_id]
+
+    # Independent diagram fragments can reuse the same graph depth even though
+    # they are not the same manufacturing stage. Use connector order only when
+    # every WC belongs to one coherent flow; otherwise keep the geometry fallback.
+    if len(assigned) != len(shapes) or len(set(assigned_component.values())) != 1:
+        return []
+
+    layers_by_depth: Dict[int, List[ShapeRecord]] = defaultdict(list)
+    for shape in shapes:
+        if shape.shape_id in assigned:
+            layers_by_depth[assigned[shape.shape_id]].append(shape)
+
+    layers = [layers_by_depth[value] for value in sorted(layers_by_depth)]
+    return layers
+
+
 def _topological_layers(shapes: List[ShapeRecord], page: PageRecord) -> List[List[ShapeRecord]]:
     by_id = {shape.shape_id: shape for shape in shapes}
     outgoing, incoming = _shape_graph(page, set(by_id))
     if not any(outgoing.values()):
-        return [[shape] for shape in sorted(shapes, key=_fallback_sort_key)]
+        functional = _functional_layers(shapes, page)
+        if functional:
+            return functional
+        # When Visio connectors do not directly reference the WC leaf shapes,
+        # functional flow is preferred. For pages without usable connectors,
+        # aligned X positions still represent one process stage.
+        return _geometry_layers(shapes)
 
     indegree = {shape_id: len(incoming.get(shape_id, set())) for shape_id in by_id}
     current = sorted([sid for sid, deg in indegree.items() if deg == 0], key=lambda sid: _fallback_sort_key(by_id[sid]))
@@ -246,9 +452,10 @@ def generate_change_rule_draft(
     for layer in layers:
         sequence += 1
         branching = len(layer) > 1
-        for subseq, shape in enumerate(sorted(layer, key=_fallback_sort_key), start=1):
-            for wc_index, new_wc in enumerate(shape.workcenters, start=1):
-                actual_subseq = subseq + wc_index - 1 if len(shape.workcenters) > 1 else subseq
+        actual_subseq = 0
+        for shape in sorted(layer, key=_subsequence_sort_key):
+            for new_wc in shape.workcenters:
+                actual_subseq += 1
                 old_values = reference.old_wcs(plant, new_wc) if reference else []
                 old_wc = old_values[0] if len(old_values) == 1 else (", ".join(old_values) if old_values else "")
                 fallback_desc = reference.description(plant, new_wc) if reference else ""
@@ -314,40 +521,44 @@ def generate_change_rule_draft(
 
 def validate_change_rule_rows(rows: List[ChangeRuleRow], valid_workcenters: Optional[Set[str]] = None) -> List[ChangeRuleRow]:
     valid_set = {norm(value) for value in (valid_workcenters or set())}
-    seen: Set[Tuple[int, int]] = set()
-    sequences = sorted({row.sequence for row in rows if row.sequence > 0})
-    gaps = set(range(1, max(sequences) + 1)).difference(sequences) if sequences else set()
-
+    grouped: Dict[Tuple[str, str], List[ChangeRuleRow]] = defaultdict(list)
     for row in rows:
-        issues = [item.strip() for item in row.notes.split(";") if item.strip()]
-        key = (row.sequence, row.subseq)
-        if key in seen:
-            issues.append("Duplicate SEQUENCE/SUBSEQ")
-        seen.add(key)
-        if not row.crid:
-            issues.append("Missing CRID")
-        if not row.plant:
-            issues.append("Missing Plant")
-        if not row.new_wc:
-            issues.append("Missing NEW WC")
-        if not row.old_wc:
-            issues.append("Missing OLD WC")
-        if not row.op_descriptions.strip():
-            issues.append("Blank operation description")
-        expected_column = f"SEQ{row.sequence}" if row.sequence > 0 else ""
-        if row.column != expected_column:
-            issues.append(f"COLUMN should be {expected_column}")
-        if valid_set and row.new_wc and norm(row.new_wc) not in valid_set:
-            issues.append("NEW WC not in Plant mapping")
-        if gaps:
-            issues.append("Sequence gap exists")
-        # Deduplicate preserving order.
-        unique: List[str] = []
-        for issue in issues:
-            if issue and issue not in unique:
-                unique.append(issue)
-        row.notes = "; ".join(unique)
-        row.status = "Ready" if not unique else "Review"
+        grouped[(norm(row.plant), norm(row.crid))].append(row)
+
+    for group_rows in grouped.values():
+        seen: Set[Tuple[int, int]] = set()
+        sequences = sorted({row.sequence for row in group_rows if row.sequence > 0})
+        gaps = set(range(1, max(sequences) + 1)).difference(sequences) if sequences else set()
+        for row in group_rows:
+            issues = [item.strip() for item in row.notes.split(";") if item.strip()]
+            key = (row.sequence, row.subseq)
+            if key in seen:
+                issues.append("Duplicate SEQUENCE/SUBSEQ within CRID")
+            seen.add(key)
+            if not row.crid:
+                issues.append("Missing CRID")
+            if not row.plant:
+                issues.append("Missing Plant")
+            if not row.new_wc:
+                issues.append("Missing NEW WC")
+            if not row.old_wc:
+                issues.append("Missing OLD WC")
+            if not row.op_descriptions.strip():
+                issues.append("Blank operation description")
+            expected_column = f"SEQ{row.sequence}" if row.sequence > 0 else ""
+            if row.column != expected_column:
+                issues.append(f"COLUMN should be {expected_column}")
+            if valid_set and row.new_wc and norm(row.new_wc) not in valid_set:
+                issues.append("NEW WC not in Plant mapping")
+            if gaps:
+                issues.append("Sequence gap exists within CRID")
+            # Deduplicate preserving order.
+            unique: List[str] = []
+            for issue in issues:
+                if issue and issue not in unique:
+                    unique.append(issue)
+            row.notes = "; ".join(unique)
+            row.status = "Ready" if not unique else "Review"
     return rows
 
 

@@ -925,7 +925,7 @@ class App:
         cols = ("crid","plant","alternate","sequence","subseq","old_wc","new_wc","description","rule_type","column","status","notes")
         self.routing_tree = ttk.Treeview(table_frame, columns=cols, show="headings", selectmode="browse", style="Draft.Treeview")
         specs = [
-            ("crid","CRID",90),("plant","PLANT",55),("alternate","ALT",45),("sequence","SEQ",45),("subseq","SUB",45),
+            ("crid","CRID",90),("plant","PLANT",55),("alternate","ALT",45),("sequence","SEQ (CRID)",72),("subseq","SUB (CRID)",72),
             ("old_wc","OLD WC",90),("new_wc","NEW WC",90),("description","OP_DESCRIPTIONS",180),("rule_type","RULE TYPE",70),
             ("column","COLUMN",65),("status","STATUS",70),("notes","REVIEW NOTES",200),
         ]

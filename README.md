@@ -67,7 +67,7 @@ Exports use this order:
 
 `CRID | PLANT | ALTERNATE | SEQUENCE | SUBSEQ | OLD WC | NEW WC | OP_DESCRIPTIONS | RULE TYPE | COLUMN`
 
-`NEW WC` comes from VSM shape text. `OLD WC` comes from the confirmed reference workbook. The application derives sequence and subsequence from connector topology when possible and uses page geometry as a fallback. Ambiguous branches remain visible for human review.
+`NEW WC` comes from VSM shape text. `OLD WC` comes from the confirmed reference workbook. `SEQUENCE` and `SUBSEQ` restart within each Department/CRID. The application follows connector direction for functional process order (including snake layouts), groups parallel operations under one SEQUENCE with consecutive SUBSEQ values, and uses page geometry only when the connector flow is incomplete. Ambiguous branches remain visible for human review.
 
 ## Install and run from source
 

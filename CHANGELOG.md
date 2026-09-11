@@ -2,6 +2,7 @@
 
 ## 1.3.8
 
+- Corrected SEQ/SUB semantics to operate within each Department/CRID: connector flow determines functional SEQ order (including snake layouts), parallel operations share one SEQ with consecutive SUB values, repeated WCs at different stages are preserved, and validation checks duplicates and gaps per CRID.
 - Simplified Inspect process to the Visual Preview only and added a top VSM-file selector for switching loaded files without returning to Assign context.
 - Simplified the Step 2 panel titles to **Active Plant mapping** and **VSM files and plant assignment**, and expanded the active mapping table to show more records without scrolling.
 - Added completed/dated VSM page-name inference when a Plant mapping is incomplete, with stable snake_case keys such as `bearing_assembly` and `fab_lining`.
