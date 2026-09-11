@@ -1801,7 +1801,7 @@ class App:
             )
             self.rebuild_mapping()
             self.invalidate_analyzed_files()
-            self.status.configure(text="Mapping ready")
+            self.status.configure(text="Reference ready")
         except Exception as exc:
             self.status.configure(text="Mapping error")
             messagebox.showerror("Mapping workbook", str(exc))
