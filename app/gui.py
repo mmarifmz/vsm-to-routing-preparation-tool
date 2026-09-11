@@ -607,7 +607,7 @@ class App:
 
         files_card = ttk.Labelframe(
             self.left,
-            text="Step 1. VSM files and plant assignment",
+            text="VSM files and plant assignment",
             style="Card.TLabelframe",
         )
         files_card.grid(row=2, column=0, sticky="nsew")
@@ -1393,12 +1393,12 @@ class App:
         if not hasattr(self, "context_mapping_frame"):
             return
         if show:
-            self.source_card.configure(text="Step 2. Active Plant mapping")
+            self.source_card.configure(text="Active Plant mapping", height=300)
             self.source_tabs.grid_remove()
             self.context_mapping_frame.grid()
             self.refresh_context_mapping()
         else:
-            self.source_card.configure(text="Step 2 support. Department / CRID mapping")
+            self.source_card.configure(text="Department / CRID mapping", height=180)
             self.context_mapping_frame.grid_remove()
             self.source_tabs.grid()
 

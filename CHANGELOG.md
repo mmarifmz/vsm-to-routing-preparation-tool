@@ -2,6 +2,7 @@
 
 ## 1.3.8
 
+- Simplified the Step 2 panel titles to **Active Plant mapping** and **VSM files and plant assignment**, and expanded the active mapping table to show more records without scrolling.
 - Added completed/dated VSM page-name inference when a Plant mapping is incomplete, with stable snake_case keys such as `bearing_assembly` and `fab_lining`.
 - Added alias reconciliation so descriptive page names retain an existing business CRID when one is available, plus visible suggestion provenance in Step 2.
 - Excluded pages marked `Old` or `Combined into` from page-name inference and added automated regression tests for CA06-style detection.
